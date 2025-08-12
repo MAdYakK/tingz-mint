@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mint tingz</title>
+  <title>Mint</title>
   <script src="https://unpkg.com/ethers@6.12.2/dist/ethers.umd.min.js"></script>
   <style>
     :root {
@@ -93,7 +93,7 @@
   const TOTAL_SUPPLY_FN = "totalSupply"; // view returns uint256
   const MAX_SUPPLY_FN = "maxSupply"; // view returns uint256
   // Optional description to show under the heading. Leave empty string to hide.
-  const MINT_COPY = "Add your mint description here.";
+  const MINT_COPY = ""; // using inline <p id="desc"> text
   // =================================
 
   const el = (id) => document.getElementById(id);
@@ -117,8 +117,8 @@
 
   addrLink.textContent = shortAddr(CONTRACT_ADDRESS);
   addrLink.href = `https://etherscan.io/address/${CONTRACT_ADDRESS}`;
-  if (MINT_COPY && MINT_COPY.trim()) { descEl.textContent = MINT_COPY; descEl.style.display='block'; }
-  else { descEl.style.display='none'; }
+  if (typeof MINT_COPY === 'string' && MINT_COPY.trim()) { descEl.textContent = MINT_COPY; descEl.style.display='block'; }
+  else { descEl.style.display = (descEl.textContent.trim() ? 'block' : 'none'); }
 
   let provider, signer, contract;
   let account, chainId;
@@ -199,26 +199,42 @@
         priceEl.textContent = `${ethers.formatEther(priceWei)} ETH`;
       }
       try {
-        const [ts, ms] = await Promise.all([
-          read[TOTAL_SUPPLY_FN]().catch(()=>null),
-          read[MAX_SUPPLY_FN]().catch(()=>null),
-        ]);
-        if (ts!=null && ms!=null) {
-          supplyEl.textContent = `${ts} / ${ms}`;
+        // supply detection (tries several common fn names)
+        const getFirst = async (fns) => {
+          for (const fn of fns) {
+            try {
+              if (typeof read[fn] === 'function') {
+                const v = await read[fn]();
+                if (v !== undefined && v !== null) return { fn, v: BigInt(v) };
+              }
+            } catch {}
+          }
+          return null;
+        };
+        const tsCand = await getFirst([TOTAL_SUPPLY_FN, 'totalMinted', 'currentIndex', 'nextTokenId']);
+        const msCand = await getFirst([MAX_SUPPLY_FN, 'collectionSize', 'MAX_SUPPLY', 'cap']);
+        let minted = null, max = null;
+        if (tsCand) {
+          minted = tsCand.v;
+          if (tsCand.fn === 'currentIndex' || tsCand.fn === 'nextTokenId') {
+            try { const start = await read['startTokenId'](); minted = minted - BigInt(start); } catch {}
+          }
+        }
+        if (msCand) max = msCand.v;
+        if (minted !== null && max !== null) {
+          supplyEl.textContent = `${minted} / ${max}`;
           try {
-            const tsN = Number(ts), msN = Number(ms);
+            const tsN = Number(minted), msN = Number(max);
             if (msN > 0) {
               const pct = Math.max(0, Math.min(100, Math.floor((tsN / msN) * 100)));
               progressWrap.style.display = 'block';
               progressBar.style.width = pct + '%';
               progressBar.setAttribute('aria-valuenow', String(pct));
-            } else {
-              progressWrap.style.display = 'none';
-            }
-            soldOut = (BigInt(ts) >= BigInt(ms));
+            } else { progressWrap.style.display = 'none'; }
+            soldOut = minted >= max;
           } catch { soldOut = false; progressWrap.style.display = 'none'; }
-        } else if (ts!=null) {
-          supplyEl.textContent = `${ts}`;
+        } else if (minted !== null) {
+          supplyEl.textContent = `${minted}`;
           soldOut = false;
         } else {
           supplyEl.textContent = '—';
@@ -313,7 +329,13 @@
     { "type":"function", "stateMutability":"payable", "name":"publicMint", "inputs":[{"name":"amount","type":"uint256"}], "outputs":[] },
     { "type":"function", "stateMutability":"view", "name": PRICE_FN, "inputs":[], "outputs":[{"type":"uint256"}] },
     { "type":"function", "stateMutability":"view", "name": TOTAL_SUPPLY_FN, "inputs":[], "outputs":[{"type":"uint256"}] },
-    { "type":"function", "stateMutability":"view", "name": MAX_SUPPLY_FN, "inputs":[], "outputs":[{"type":"uint256"}] }
+    { "type":"function", "stateMutability":"view", "name": MAX_SUPPLY_FN, "inputs":[], "outputs":[{"type":"uint256"}] },
+    { "type":"function","stateMutability":"view","name":"totalMinted","inputs":[],"outputs":[{"type":"uint256"}] },
+    { "type":"function","stateMutability":"view","name":"collectionSize","inputs":[],"outputs":[{"type":"uint256"}] },
+    { "type":"function","stateMutability":"view","name":"currentIndex","inputs":[],"outputs":[{"type":"uint256"}] },
+    { "type":"function","stateMutability":"view","name":"nextTokenId","inputs":[],"outputs":[{"type":"uint256"}] },
+    { "type":"function","stateMutability":"view","name":"MAX_SUPPLY","inputs":[],"outputs":[{"type":"uint256"}] },
+    { "type":"function","stateMutability":"view","name":"startTokenId","inputs":[],"outputs":[{"type":"uint256"}] }
   ];
 
   // UI Hooks
