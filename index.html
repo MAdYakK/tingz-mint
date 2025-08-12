@@ -125,15 +125,46 @@
   let priceWei = USE_PRICE_VIEW ? 0n : ethers.parseEther(PRICE_FALLBACK_ETH);
   let soldOut = false;
 
+  // EIP-6963 provider discovery (multi-wallet)
+  const _eip6963 = { all: [] };
+  window.addEventListener('eip6963:announceProvider', (event) => {
+    const { info, provider } = event.detail || {};
+    if (info && provider && !_eip6963.all.some(p => p.info?.uuid === info.uuid)) {
+      _eip6963.all.push({ info, provider });
+    }
+  });
+  try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch {}
+
+
   // Choose the correct injected provider when multiple wallets are present (EIP-5749 style)
   function getInjectedProvider(){
+    // Prefer EIP-6963 announced providers
+    const pickFrom = _eip6963.all;
+    const byRdns = (substr) => pickFrom.find(p => (p.info?.rdns && p.info.rdns.toLowerCase().includes(substr)));
+    const byFlag = (flag) => pickFrom.find(p => p.provider && p.provider[flag]);
+
+    let chosen = byRdns('metamask') || byFlag('isMetaMask');
+    if (!chosen) chosen = byRdns('coinbase') || byFlag('isCoinbaseWallet');
+    if (!chosen) chosen = byRdns('phantom') || byFlag('isPhantom');
+    if (chosen) return chosen.provider;
+
+    // Fallback: legacy multi-injected array
     const eth = window.ethereum;
-    if (!eth) return null;
-    if (Array.isArray(eth.providers) && eth.providers.length){
+    if (eth && Array.isArray(eth.providers) && eth.providers.length){
       const meta = eth.providers.find((p)=>p.isMetaMask);
+      if (meta) return meta;
       const cbw  = eth.providers.find((p)=>p.isCoinbaseWallet);
-      return meta || cbw || eth.providers[0];
+      if (cbw) return cbw;
+      const ph   = eth.providers.find((p)=>p.isPhantom);
+      if (ph) return ph;
+      return eth.providers[0];
     }
+    // Single injected
+    if (eth?.isMetaMask) return eth;
+    if (eth?.isCoinbaseWallet) return eth;
+    if (eth?.isPhantom) return eth;
+    return eth || null;
+  }
     return eth;
   }
 
