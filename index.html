@@ -42,7 +42,7 @@
   <div class="wrap">
     <div class="card">
       <h1>Mint</h1>
-      <p id="desc" class="desc">Add your mint description here.</p>
+      <p id="desc" class="desc">yrp.</p>
       <div class="row">
         <button id="connectBtn" onclick="window._connect && window._connect()">Connect Wallet</button>
         <button id="switchBtn" class="btn-danger" style="display:none">Switch to Ethereum Mainnet</button>
@@ -164,8 +164,6 @@
     if (eth?.isCoinbaseWallet) return eth;
     if (eth?.isPhantom) return eth;
     return eth || null;
-  }
-    return eth;
   }
 
   function friendlyError(e){
