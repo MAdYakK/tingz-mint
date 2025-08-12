@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mint</title>
-  <script src="https://cdn.jsdelivr.net/npm/ethers@6.12.2/dist/ethers.min.js"></script>
+  <script src="https://unpkg.com/ethers@6.12.2/dist/ethers.umd.min.js"></script>
   <style>
     :root {
       --bg: #0b0b0f; --card:#121219; --ink:#e8e8f3; --muted:#a8a8bf; --accent:#6ee7b7; --danger:#ef4444;
@@ -44,7 +44,7 @@
       <h1>Mint</h1>
       <p id="desc" class="desc">Add your mint description here.</p>
       <div class="row">
-        <button id="connectBtn">Connect Wallet</button>
+        <button id="connectBtn" onclick="window._connect && window._connect()">Connect Wallet</button>
         <button id="switchBtn" class="btn-danger" style="display:none">Switch to Ethereum Mainnet</button>
         <span id="accountPill" class="pill" style="display:none"></span>
       </div>
@@ -276,6 +276,8 @@
   plusBtn.addEventListener('click',  () => { qtyInput.value = Math.min(5, (parseInt(qtyInput.value,10)||1) + 1); onQtyChanged(); });
   qtyInput.addEventListener('input', onQtyChanged);
   maxBtn.addEventListener('click', () => { qtyInput.value = 5; onQtyChanged(); });
+  // Expose a safe global fallback for the Connect button if addEventListener fails to bind
+  window._connect = connect;
 
   // Wallet event listeners
   if (window.ethereum){
@@ -284,7 +286,7 @@
   }
 
   // Initial labels
-  (async() => { try { await ensureProvider(); await refreshViews(); } catch {} })();
+  (async() => { try { await ensureProvider(); await refreshViews(); } catch (e) { setStatus('No wallet detected. Install MetaMask (desktop) or open this page in your wallet\'s in-app browser.', false); } })();
 })();
 </script>
 </body>
