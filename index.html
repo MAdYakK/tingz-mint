@@ -42,7 +42,8 @@
   <div class="wrap">
     <div class="card">
       <h1>Mint</h1>
-      <p id="desc" class="desc">Add your mint description here.</p>
+      <p id="desc" class="desc">Tingz. Generated onchain, at mint, seeded by minter's address..</p>
+      <p id="desc" class="desc">Supply: 1000 Mint price: 0.001 Max: Five per wallet.</p>
       <div class="row">
         <button id="connectBtn" onclick="window._connect && window._connect()">Connect Wallet</button>
         <button id="switchBtn" class="btn-danger" style="display:none">Switch to Ethereum Mainnet</button>
@@ -125,6 +126,24 @@
   let priceWei = USE_PRICE_VIEW ? 0n : ethers.parseEther(PRICE_FALLBACK_ETH);
   let soldOut = false;
 
+  // Choose the correct injected provider when multiple wallets are present (EIP-5749 style)
+  function getInjectedProvider(){
+    const eth = window.ethereum;
+    if (!eth) return null;
+    if (Array.isArray(eth.providers) && eth.providers.length){
+      const meta = eth.providers.find((p)=>p.isMetaMask);
+      const cbw  = eth.providers.find((p)=>p.isCoinbaseWallet);
+      return meta || cbw || eth.providers[0];
+    }
+    return eth;
+  }
+
+  function friendlyError(e){
+    try {
+      return e?.info?.error?.message || e?.error?.message || e?.data?.message || e?.cause?.message || e?.shortMessage || e?.reason || e?.message || (typeof e === 'string' ? e : JSON.stringify(e));
+    } catch { return 'Unknown error'; }
+  }
+
   function shortAddr(a){ return a ? a.slice(0,6)+"…"+a.slice(-4) : '—'; }
 
   function setStatus(msg, ok=true){
@@ -194,7 +213,12 @@
   }
 
   async function ensureProvider(){
-    if (!window.ethereum){ setStatus('No wallet detected. Install MetaMask or a compatible wallet.', false); throw new Error('no-ethereum'); }
+    const injected = getInjectedProvider();
+    if (!injected){ setStatus('No wallet detected. Install MetaMask or open in your wallet\'s in-app browser.', false); throw new Error('no-ethereum'); }
+    provider = new ethers.BrowserProvider(injected, 'any');
+    chainId = (await provider.getNetwork()).chainId; chainId = Number(chainId);
+    updateChainUI();
+  }
     provider = new ethers.BrowserProvider(window.ethereum, 'any');
     chainId = (await provider.getNetwork()).chainId; chainId = Number(chainId);
     updateChainUI();
@@ -203,7 +227,8 @@
   async function connect(){
     try {
       await ensureProvider();
-      const accs = await provider.send('eth_requestAccounts', []);
+      const injected = getInjectedProvider();
+      const accs = await injected.request({ method: 'eth_requestAccounts' });
       account = accs[0];
       signer = await provider.getSigner();
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
@@ -214,6 +239,10 @@
       setStatus('Connected.');
       await refreshViews();
     } catch (err){
+      console.error(err);
+      setStatus(friendlyError(err), false);
+    }
+  } catch (err){
       console.error(err);
       setStatus(err.shortMessage || err.message || 'Failed to connect', false);
     }
@@ -254,8 +283,7 @@
       await refreshViews();
     } catch (err){
       console.error(err);
-      const msg = err?.info?.error?.message || err?.shortMessage || err?.message || 'Transaction failed';
-      setStatus(msg, false);
+      setStatus(friendlyError(err) || 'Transaction failed', false);
     }
   }
 
