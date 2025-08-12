@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mint</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.12.2/dist/ethers.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0b0f; --card:#121219; --ink:#e8e8f3; --muted:#a8a8bf; --accent:#6ee7b7; --danger:#ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background: radial-gradient(1200px 600px at 70% -10%, #1a1a29, #0b0b0f); color:var(--ink); font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .wrap { max-width: 720px; margin: 6vh auto; padding: 24px; }
+    .card { background: var(--card); border: 1px solid #1f2030; padding: 24px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+    h1 { margin: 0 0 14px; font-size: 28px; letter-spacing: .3px; }
+    .row { display:flex; gap: 16px; align-items:center; flex-wrap: wrap; }
+    .spacer { height: 14px; }
+    .muted { color: var(--muted); }
+    button { background:#1e2030; color:var(--ink); border:1px solid #2a2d44; padding:10px 14px; border-radius: 12px; cursor:pointer; transition:.15s ease; font-weight: 600; }
+    button:hover { transform: translateY(-1px); border-color:#3a3e61; }
+    button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+    .btn-accent { background: #1b2a21; border-color:#2f4f3b; }
+    .btn-accent:hover { background:#203527; border-color:#3b6a4a; }
+    .btn-danger { background:#2a1b1b; border-color:#4f2f2f; }
+    input[type=number] { width: 90px; padding:10px 12px; border-radius:12px; background:#141423; border:1px solid #2a2d44; color:var(--ink); font-weight:600; }
+    .qty { display:flex; align-items:center; gap:10px; }
+    .pill { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; border:1px solid #2a2d44; background:#121222; }
+    .grid { display:grid; grid-template-columns: 1fr; gap: 14px; }
+    .kvs { display:grid; grid-template-columns: 1fr auto; gap:10px; }
+    .k { color:var(--muted); }
+    .v { text-align:right; font-weight:700; }
+    .hr { height:1px; background:#1f2030; margin: 10px 0; border-radius:1px; }
+    a { color: var(--accent); text-decoration: none; }
+    .hint { font-size: 13px; color:#a8a8bf; }
+      .desc{margin:8px 0 16px;color:var(--muted)}
+    .progress{width:100%; height:12px; background:#141423; border:1px solid #2a2d44; border-radius:999px; overflow:hidden;}
+    .progress-bar{height:100%; width:0%; background: linear-gradient(90deg, var(--accent), #9ae6b4); transition: width .35s ease;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Mint</h1>
+      <p id="desc" class="desc">Add your mint description here.</p>
+      <div class="row">
+        <button id="connectBtn">Connect Wallet</button>
+        <button id="switchBtn" class="btn-danger" style="display:none">Switch to Ethereum Mainnet</button>
+        <span id="accountPill" class="pill" style="display:none"></span>
+      </div>
+
+      <div class="spacer"></div>
+      <div class="grid">
+        <div class="kvs">
+          <div class="k">Network</div><div class="v" id="netLabel">—</div>
+          <div class="k">Contract</div><div class="v"><a id="addrLink" href="#" target="_blank">—</a></div>
+          <div class="k">Price</div><div class="v" id="price">—</div>
+          <div class="k">Supply</div><div class="v" id="supply">—</div>
+        </div>
+        <div id="progressWrap" class="progress" style="display:none"><div id="progressBar" class="progress-bar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+        <div class="hr"></div>
+        <div class="row">
+          <div class="qty">
+            <button id="minusBtn">−</button>
+            <input id="qty" type="number" value="1" min="1" max="5" step="1" />
+            <button id="plusBtn">+</button>
+            <button id="maxBtn" title="Max (5)">Max</button>
+          </div>
+          <div style="margin-left:auto; text-align:right">
+            <div class="muted">Total</div>
+            <div id="total" style="font-size:20px; font-weight:800">—</div>
+          </div>
+        </div>
+        <div class="row">
+          <button id="mintBtn" class="btn-accent" disabled>Mint</button>
+        </div>
+        <div class="hint" id="status">Ready. Max 5 per tx.</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ======== CONFIGURE THESE ========
+  const CONTRACT_ADDRESS = "0x714aFF40Fed2629Ca45b0252c45dbcd8489186e5"; // your mainnet contract
+  const FUNCTION_NAME = "mint"; // payable mint function
+  const HAS_AMOUNT_ARG = true; // mint(uint256 qty)
+  // Price handling — contract doesn't expose price(), so we use a fallback
+  const USE_PRICE_VIEW = false; // set true if your contract has a view price()
+  const PRICE_FALLBACK_ETH = "0.001"; // per mint
+  // Optional view fn names (change if different in your contract)
+  const PRICE_FN = "price"; // view returns uint256 wei
+  const TOTAL_SUPPLY_FN = "totalSupply"; // view returns uint256
+  const MAX_SUPPLY_FN = "maxSupply"; // view returns uint256
+  // Optional description to show under the heading. Leave empty string to hide.
+  const MINT_COPY = "Add your mint description here.";
+  // =================================
+
+  const el = (id) => document.getElementById(id);
+  const connectBtn = el('connectBtn');
+  const switchBtn  = el('switchBtn');
+  const accountPill = el('accountPill');
+  const qtyInput = el('qty');
+  const minusBtn = el('minusBtn');
+  const plusBtn  = el('plusBtn');
+  const priceEl  = el('price');
+  const totalEl  = el('total');
+  const supplyEl = el('supply');
+  const netLabel = el('netLabel');
+  const statusEl = el('status');
+  const mintBtn  = el('mintBtn');
+  const addrLink = el('addrLink');
+  const descEl   = el('desc');
+  const progressWrap = el('progressWrap');
+  const progressBar  = el('progressBar');
+  const maxBtn = el('maxBtn');
+
+  addrLink.textContent = shortAddr(CONTRACT_ADDRESS);
+  addrLink.href = `https://etherscan.io/address/${CONTRACT_ADDRESS}`;
+  if (MINT_COPY && MINT_COPY.trim()) { descEl.textContent = MINT_COPY; descEl.style.display='block'; }
+  else { descEl.style.display='none'; }
+
+  let provider, signer, contract;
+  let account, chainId;
+  let priceWei = USE_PRICE_VIEW ? 0n : ethers.parseEther(PRICE_FALLBACK_ETH);
+  let soldOut = false;
+
+  function shortAddr(a){ return a ? a.slice(0,6)+"…"+a.slice(-4) : '—'; }
+
+  function setStatus(msg, ok=true){
+    statusEl.textContent = msg;
+    statusEl.style.color = ok ? '#a8a8bf' : 'var(--danger)';
+  }
+
+  function onQtyChanged(){
+    const n = parseInt(qtyInput.value || '1', 10);
+    const clamped = Math.min(5, Math.max(1, isNaN(n) ? 1 : n));
+    qtyInput.value = String(clamped);
+    const q = BigInt(clamped);
+    const total = priceWei * q;
+    totalEl.textContent = priceWei ? `${ethers.formatEther(total)} ETH` : '—';
+  }
+
+  async function refreshViews(){
+    try {
+      if (!provider) return;
+      const read = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+      if (USE_PRICE_VIEW) {
+        try { priceWei = await read[PRICE_FN](); } catch {}
+        priceEl.textContent = priceWei ? `${ethers.formatEther(priceWei)} ETH` : '—';
+      } else {
+        priceEl.textContent = `${ethers.formatEther(priceWei)} ETH`;
+      }
+      try {
+        const [ts, ms] = await Promise.all([
+          read[TOTAL_SUPPLY_FN]().catch(()=>null),
+          read[MAX_SUPPLY_FN]().catch(()=>null),
+        ]);
+        if (ts!=null && ms!=null) {
+          supplyEl.textContent = `${ts} / ${ms}`;
+          try {
+            const tsN = Number(ts), msN = Number(ms);
+            if (msN > 0) {
+              const pct = Math.max(0, Math.min(100, Math.floor((tsN / msN) * 100)));
+              progressWrap.style.display = 'block';
+              progressBar.style.width = pct + '%';
+              progressBar.setAttribute('aria-valuenow', String(pct));
+            } else {
+              progressWrap.style.display = 'none';
+            }
+            soldOut = (BigInt(ts) >= BigInt(ms));
+          } catch { soldOut = false; progressWrap.style.display = 'none'; }
+        } else if (ts!=null) {
+          supplyEl.textContent = `${ts}`;
+          soldOut = false;
+        } else {
+          supplyEl.textContent = '—';
+          soldOut = false;
+        }
+      } catch { soldOut = false; }
+      updateChainUI();
+      onQtyChanged();
+    } catch (err){ console.error(err); }
+  }
+
+  function isOnMainnet(){ return chainId === 1; }
+  function updateChainUI(){
+    netLabel.textContent = chainId ? (chainId===1? 'Ethereum Mainnet' : `Chain ${chainId}`) : '—';
+    switchBtn.style.display = isOnMainnet()? 'none':'inline-block';
+    const disabled = !(account && isOnMainnet()) || soldOut;
+    mintBtn.disabled = disabled;
+    mintBtn.textContent = soldOut ? 'Sold out' : 'Mint';
+    if (soldOut) setStatus('Sold out');
+  }
+
+  async function ensureProvider(){
+    if (!window.ethereum){ setStatus('No wallet detected. Install MetaMask or a compatible wallet.', false); throw new Error('no-ethereum'); }
+    provider = new ethers.BrowserProvider(window.ethereum, 'any');
+    chainId = (await provider.getNetwork()).chainId; chainId = Number(chainId);
+    updateChainUI();
+  }
+
+  async function connect(){
+    try {
+      await ensureProvider();
+      const accs = await provider.send('eth_requestAccounts', []);
+      account = accs[0];
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      accountPill.style.display = 'inline-flex';
+      accountPill.textContent = shortAddr(account);
+      connectBtn.textContent = 'Connected';
+      connectBtn.disabled = true;
+      setStatus('Connected.');
+      await refreshViews();
+    } catch (err){
+      console.error(err);
+      setStatus(err.shortMessage || err.message || 'Failed to connect', false);
+    }
+  }
+
+  async function switchToMainnet(){
+    try {
+      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] });
+      chainId = 1; updateChainUI(); setStatus('Switched to Ethereum Mainnet.');
+      await refreshViews();
+    } catch (err){ setStatus('Switch rejected or failed.', false); }
+  }
+
+  async function mint(){
+    if (!signer) return setStatus('Connect your wallet first.', false);
+    if (!isOnMainnet()) return setStatus('Please switch to Ethereum Mainnet.', false);
+
+    const qty = Math.min(5, Math.max(1, parseInt(qtyInput.value || '1',10)));
+    qtyInput.value = String(qty);
+    const q = BigInt(qty);
+    const value = priceWei * q;
+
+    try {
+      setStatus('Sending transaction…');
+      const args = HAS_AMOUNT_ARG ? [q] : [];
+      const overrides = priceWei ? { value } : {};
+
+      try { await contract.estimateGas[FUNCTION_NAME](...args, overrides); } catch {}
+
+      const tx = await contract[FUNCTION_NAME](...args, overrides);
+      setStatus(`Waiting for confirmation… ${tx.hash.slice(0,10)}…`);
+      await tx.wait();
+      setStatus('Mint successful!');
+      const link = document.createElement('a');
+      link.href = `https://etherscan.io/tx/${tx.hash}`; link.target = '_blank'; link.textContent = 'View on Etherscan';
+      statusEl.appendChild(document.createTextNode(' '));
+      statusEl.appendChild(link);
+      await refreshViews();
+    } catch (err){
+      console.error(err);
+      const msg = err?.info?.error?.message || err?.shortMessage || err?.message || 'Transaction failed';
+      setStatus(msg, false);
+    }
+  }
+
+  // Minimal ABI (edit to fit your contract)
+  const ABI = [
+    { "type":"function", "stateMutability":"payable", "name":"mint", "inputs":[{"name":"amount","type":"uint256"}], "outputs":[] },
+    { "type":"function", "stateMutability":"payable", "name":"publicMint", "inputs":[{"name":"amount","type":"uint256"}], "outputs":[] },
+    { "type":"function", "stateMutability":"view", "name": PRICE_FN, "inputs":[], "outputs":[{"type":"uint256"}] },
+    { "type":"function", "stateMutability":"view", "name": TOTAL_SUPPLY_FN, "inputs":[], "outputs":[{"type":"uint256"}] },
+    { "type":"function", "stateMutability":"view", "name": MAX_SUPPLY_FN, "inputs":[], "outputs":[{"type":"uint256"}] }
+  ];
+
+  // UI Hooks
+  connectBtn.addEventListener('click', connect);
+  switchBtn.addEventListener('click', switchToMainnet);
+  mintBtn.addEventListener('click', mint);
+  minusBtn.addEventListener('click', () => { qtyInput.value = Math.max(1, (parseInt(qtyInput.value,10)||1) - 1); onQtyChanged(); });
+  plusBtn.addEventListener('click',  () => { qtyInput.value = Math.min(5, (parseInt(qtyInput.value,10)||1) + 1); onQtyChanged(); });
+  qtyInput.addEventListener('input', onQtyChanged);
+  maxBtn.addEventListener('click', () => { qtyInput.value = 5; onQtyChanged(); });
+
+  // Wallet event listeners
+  if (window.ethereum){
+    window.ethereum.on?.('accountsChanged', (accs)=>{ account = accs[0]; accountPill.textContent = shortAddr(account||''); updateChainUI(); });
+    window.ethereum.on?.('chainChanged', (hex)=>{ chainId = parseInt(hex,16); updateChainUI(); refreshViews(); });
+  }
+
+  // Initial labels
+  (async() => { try { await ensureProvider(); await refreshViews(); } catch {} })();
+})();
+</script>
+</body>
+</html>
