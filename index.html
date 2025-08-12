@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mint</title>
+  <title>Tingz</title>
   <script src="https://unpkg.com/ethers@6.12.2/dist/ethers.umd.min.js"></script>
   <style>
     :root {
@@ -36,6 +36,9 @@
       .desc{margin:8px 0 16px;color:var(--muted)}
     .progress{width:100%; height:12px; background:#141423; border:1px solid #2a2d44; border-radius:999px; overflow:hidden;}
     .progress-bar{height:100%; width:0%; background: linear-gradient(90deg, var(--accent), #9ae6b4); transition: width .35s ease;}
+    .spinner{width:14px;height:14px;border:2px solid #3a3e61;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    #supplyRow{display:flex;gap:8px;align-items:center;justify-content:flex-end}
   </style>
 </head>
 <body>
@@ -55,7 +58,7 @@
           <div class="k">Network</div><div class="v" id="netLabel">—</div>
           <div class="k">Contract</div><div class="v"><a id="addrLink" href="#" target="_blank">—</a></div>
           <div class="k">Price</div><div class="v" id="price">—</div>
-          <div class="k">Supply</div><div class="v" id="supply">—</div>
+          <div class="k">Supply</div><div class="v" id="supplyRow"><span id="supply">—</span><span id="supplySpinner" class="spinner" style="display:none" aria-label="Loading"></span></div>
         </div>
         <div id="progressWrap" class="progress" style="display:none"><div id="progressBar" class="progress-bar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
         <div class="hr"></div>
@@ -94,6 +97,7 @@
   const MAX_SUPPLY_FN = "maxSupply"; // view returns uint256
   // Optional description to show under the heading. Leave empty string to hide.
   const MINT_COPY = ""; // using inline <p id="desc"> text
+  const DEPLOY_FROM_BLOCK = 23121357;
   // =================================
 
   const el = (id) => document.getElementById(id);
@@ -106,6 +110,7 @@
   const priceEl  = el('price');
   const totalEl  = el('total');
   const supplyEl = el('supply');
+  const supplySpinner = el('supplySpinner');
   const netLabel = el('netLabel');
   const statusEl = el('status');
   const mintBtn  = el('mintBtn');
@@ -124,6 +129,36 @@
   let account, chainId;
   let priceWei = USE_PRICE_VIEW ? 0n : ethers.parseEther(PRICE_FALLBACK_ETH);
   let soldOut = false;
+  let mintedLogsCache = null; // cached BigInt
+  const TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
+  const ZERO_TOPIC = ethers.zeroPadValue(ethers.ZeroAddress, 32);
+
+  async function countMintedByLogs(fromBlock){
+    try {
+      const latest = await provider.getBlockNumber();
+      let total = 0n;
+      const STEP = 20000; // blocks per chunk
+      for (let start = fromBlock; start <= latest; start += STEP){
+        const end = Math.min(start + STEP - 1, latest);
+        const logs = await provider.getLogs({
+          address: CONTRACT_ADDRESS,
+          fromBlock: start,
+          toBlock: end,
+          topics: [TRANSFER_TOPIC, ZERO_TOPIC]
+        });
+        total += BigInt(logs.length);
+      }
+      return total;
+    } catch (e){ console.warn('log scan failed', e); return null; }
+  }
+
+  async function getMintedViaLogs(){
+    if (mintedLogsCache !== null) return mintedLogsCache;
+    if (typeof DEPLOY_FROM_BLOCK !== 'number' || !isFinite(DEPLOY_FROM_BLOCK)) return null;
+    const n = await countMintedByLogs(DEPLOY_FROM_BLOCK);
+    if (n !== null) mintedLogsCache = n;
+    return mintedLogsCache;
+  }
 
   // EIP-6963 provider discovery (multi-wallet)
   const _eip6963 = { all: [] };
@@ -221,6 +256,12 @@
           }
         }
         if (msCand) max = msCand.v;
+        // Fallback: estimate minted by Transfer(from=0x0) logs since deploy
+        if (minted === null && typeof DEPLOY_FROM_BLOCK === 'number' && isFinite(DEPLOY_FROM_BLOCK) && provider){
+          try { if (supplySpinner) supplySpinner.style.display = 'inline-block'; minted = await getMintedViaLogs(); }
+          catch {}
+          finally { if (supplySpinner) supplySpinner.style.display = 'none'; }
+        }
         if (minted !== null && max !== null) {
           supplyEl.textContent = `${minted} / ${max}`;
           try {
@@ -237,9 +278,14 @@
           supplyEl.textContent = `${minted}`;
           soldOut = false;
         } else {
+        if (max !== null) {
+          // Only max supply is available
+          supplyEl.textContent = `— / ${max}`;
+        } else {
           supplyEl.textContent = '—';
-          soldOut = false;
         }
+        soldOut = false;
+      }
       } catch { soldOut = false; }
       updateChainUI();
       onQtyChanged();
