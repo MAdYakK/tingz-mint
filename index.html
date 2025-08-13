@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tingz</title>
+  <title>Mint</title>
   <script src="https://unpkg.com/ethers@6.12.2/dist/ethers.umd.min.js"></script>
   <style>
     :root {
@@ -127,6 +127,7 @@
 
   let provider, signer, contract;
   let account, chainId;
+  let injectedProvider = null;
   let priceWei = USE_PRICE_VIEW ? 0n : ethers.parseEther(PRICE_FALLBACK_ETH);
   let soldOut = false;
   let mintedLogsCache = null; // cached BigInt
@@ -304,8 +305,8 @@
 
   async function ensureProvider(){
     const injected = getInjectedProvider();
-    if (!injected){ setStatus('No wallet detected. Install MetaMask or open in your wallet\'s in-app browser.', false); throw new Error('no-ethereum'); }
-    provider = new ethers.BrowserProvider(injected, 'any');
+    injectedProvider = injected;
+    provider = new ethers.BrowserProvider(injectedProvider, 'any');
     chainId = (await provider.getNetwork()).chainId; chainId = Number(chainId);
     updateChainUI();
   }
@@ -313,8 +314,7 @@
   async function connect(){
     try {
       await ensureProvider();
-      const injected = getInjectedProvider();
-      const accs = await injected.request({ method: 'eth_requestAccounts' });
+      const accs = await injectedProvider.request({ method: 'eth_requestAccounts' });
       account = accs[0];
       signer = await provider.getSigner();
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
@@ -332,7 +332,7 @@
 
   async function switchToMainnet(){
     try {
-      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] });
+      await injectedProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] });
       chainId = 1; updateChainUI(); setStatus('Switched to Ethereum Mainnet.');
       await refreshViews();
     } catch (err){ setStatus('Switch rejected or failed.', false); }
@@ -346,6 +346,22 @@
     qtyInput.value = String(qty);
     const q = BigInt(qty);
     const value = priceWei * q;
+
+    // HARD GATE: verify mainnet at send-time; attempt switch, otherwise abort
+    try {
+      const netNow = await signer.provider.getNetwork();
+      if (Number(netNow.chainId) !== 1) {
+        try {
+          await injectedProvider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] });
+        } catch (e) {
+          setStatus('Wrong network. Please switch to Ethereum Mainnet.', false);
+          return;
+        }
+        const net2 = await signer.provider.getNetwork();
+        if (Number(net2.chainId) !== 1) { setStatus('Wrong network. Please switch to Ethereum Mainnet.', false); return; }
+        chainId = 1; updateChainUI();
+      }
+    } catch {}
 
     try {
       setStatus('Sending transaction…');
@@ -396,8 +412,11 @@
   window._connect = connect;
 
   // Wallet event listeners
-  if (window.ethereum){
-    window.ethereum.on?.('accountsChanged', (accs)=>{ account = accs[0]; accountPill.textContent = shortAddr(account||''); updateChainUI(); });
+  if ((injectedProvider || window.ethereum) && (injectedProvider || window.ethereum).on){
+    const ethAny = injectedProvider || window.ethereum;
+    ethAny.on?.('accountsChanged', (accs)=>{ account = accs[0]; accountPill.textContent = shortAddr(account||''); updateChainUI(); });
+    ethAny.on?.('chainChanged', (hex)=>{ chainId = parseInt(hex,16); updateChainUI(); refreshViews(); });
+  });
     window.ethereum.on?.('chainChanged', (hex)=>{ chainId = parseInt(hex,16); updateChainUI(); refreshViews(); });
   }
 
