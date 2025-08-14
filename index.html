@@ -305,9 +305,13 @@
 
   async function ensureProvider(){
     const injected = getInjectedProvider();
+    if (!injected) {
+      setStatus('No wallet detected. Install MetaMask (desktop) or open this page in your wallet\'s in-app browser.', false);
+      throw new Error('no-ethereum');
+    }
     injectedProvider = injected;
     provider = new ethers.BrowserProvider(injectedProvider, 'any');
-    chainId = (await provider.getNetwork()).chainId; chainId = Number(chainId);
+    chainId = Number((await provider.getNetwork()).chainId);
     updateChainUI();
   }
 
@@ -412,13 +416,21 @@
   window._connect = connect;
 
   // Wallet event listeners
-  if ((injectedProvider || window.ethereum) && (injectedProvider || window.ethereum).on){
+  (function attachWalletEvents(){
     const ethAny = injectedProvider || window.ethereum;
-    ethAny.on?.('accountsChanged', (accs)=>{ account = accs[0]; accountPill.textContent = shortAddr(account||''); updateChainUI(); });
-    ethAny.on?.('chainChanged', (hex)=>{ chainId = parseInt(hex,16); updateChainUI(); refreshViews(); });
-  });
-    window.ethereum.on?.('chainChanged', (hex)=>{ chainId = parseInt(hex,16); updateChainUI(); refreshViews(); });
-  }
+    if (ethAny && ethAny.on) {
+      ethAny.on('accountsChanged', (accs) => {
+        account = accs?.[0];
+        accountPill.textContent = shortAddr(account||'');
+        updateChainUI();
+      });
+      ethAny.on('chainChanged', (hex) => {
+        chainId = parseInt(hex,16);
+        updateChainUI();
+        refreshViews();
+      });
+    }
+  })();
 
   // Initial labels
   (async() => { try { await ensureProvider(); await refreshViews(); } catch (e) { setStatus('No wallet detected. Install MetaMask (desktop) or open this page in your wallet\'s in-app browser.', false); } })();
